@@ -15,7 +15,8 @@ from .directions import diff_of_means, fit_probe, random_directions, score
 from .metrics import auroc
 from .prompts import build_messages
 from .scoring import outcome, outcome_fictional
-from .steering import build_conditions, sample_test_items, summarize
+from . import selective
+from .steering import build_conditions, sample_test_items, summarize, sweep_layers, triple
 
 BANDS = [(1, 3), (3, 6), (6, 12), (12, 25), (25, 100000)]
 
@@ -31,6 +32,9 @@ class Config:
     alphas: tuple = (-2.0, -1.0, 1.0, 2.0)
     n_random: int = 8
     n_shuffle: int = 4
+    sweep_langs: tuple = ()          # languages for the steering layer sweep
+    sweep_alphas: tuple = (-1.0, -2.0)
+    sweep_null: int = 3              # random null directions per layer and alpha
     limit_per_lang: int | None = None  # smoke tests
     n_boot: int = 500
     do_probe: bool = True
@@ -157,6 +161,50 @@ def run_steering(model, tok, recs, lang, plain, prompted, state, layer, cfg, ab_
     return {"layer": int(layer), "delta": delta, "n_items": int(len(items)), "conditions": results}
 
 
+def run_sweep(model, tok, recs, lang, plain, state, cfg):
+    """Steer with each layer's own difference-of-means direction, with random
+    nulls of the same norm at the same layer. Tests whether the failure to
+    induce abstention at the detection layer is specific to that layer."""
+    cls, split, ent = state["cls"], state["split"], state["ent"]
+    items = sample_test_items(cls, split, cfg.steer_per_class, cfg.seed)
+    sub, texts = [recs[i] for i in items], [plain[i] for i in items]
+    itr = np.flatnonzero(split == "train")
+    ytr = (cls[itr] == "known").astype(int)
+
+    def gen(steer=None):
+        outs = modelio.generate(model, tok, texts, cfg.max_new_tokens, cfg.gen_batch, steer=steer)
+        _, ab, co = judge(sub, outs, lang)
+        return triple(summarize(cls[items], ab, co))
+
+    out = {"n_items": int(len(items)), "base": gen(), "layers": {}}
+    for L in sweep_layers(ent.shape[0]):
+        X = ent[L].astype(np.float32)
+        d = diff_of_means(X[itr], ytr)
+        delta = float(score(X[itr][ytr == 1], d).mean() - score(X[itr][ytr == 0], d).mean())
+        rd = random_directions(X.shape[1], cfg.sweep_null, seed=cfg.seed + 100 + L)
+        e = {"delta": round(delta, 3), "dom": {}, "rand": {}}
+        for a in cfg.sweep_alphas:
+            e["dom"][f"{a:g}"] = gen(modelio.Steer(model, L, d, "add", a * delta))
+            e["rand"][f"{a:g}"] = [gen(modelio.Steer(model, L, r, "add", a * delta)) for r in rd]
+        out["layers"][str(L)] = e
+        log(f"    sweep layer {L}: delta={delta:.2f} dom={e['dom']}")
+    return out
+
+
+def run_selective(X, cls, split, co0, ab1, co1, cfg):
+    """Detector-as-abstention-rule vs the abstention prompt (see selective.py)."""
+    known = cls == "known"
+    tr, va, te = (np.flatnonzero(split == k) for k in ("train", "val", "test"))
+    if known[va].sum() < 8 or known[te].sum() < 8:
+        return None
+    d = diff_of_means(X[tr], known[tr].astype(int))
+    w, b = fit_probe(X[tr], known[tr].astype(int))
+    out = {}
+    for name, s in (("dom", score(X, d)), ("probe", score(X, w, b))):
+        out[name] = selective.evaluate(s[va], known[va], s[te], known[te], co0[te], ab1[te], co1[te], cfg.n_boot, cfg.seed)
+    return out
+
+
 def run_language(model, tok, records, lang, cfg):
     recs = [r for r in records if r["lang"] == lang]
     if cfg.limit_per_lang and len(recs) > cfg.limit_per_lang:
@@ -201,8 +249,14 @@ def run_language(model, tok, records, lang, cfg):
         "at_best_layer": stats,
     }
     state = {"ent": ent, "cls": cls, "split": split, "typ": typ, "dirs": dirs}
+    sel = run_selective(ent[bl].astype(np.float32), cls, split, co0, ab1, co1, cfg)
+    if sel:
+        result["selective"] = sel
+        log(f"[{lang}] selective: prompt {sel['dom']['prompt']} detector {sel['dom']['det']}")
     if lang in cfg.steer_langs:
         result["steering"] = run_steering(model, tok, recs, lang, plain, prompted, state, bl, cfg, None)
+    if lang in cfg.sweep_langs:
+        result["sweep"] = run_sweep(model, tok, recs, lang, plain, state, cfg)
     return result, state
 
 
