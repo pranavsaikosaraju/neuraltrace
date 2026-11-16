@@ -1,0 +1,36 @@
+name: figures
+
+# Regenerates figures/ and results/summary.md from the committed result files,
+# and runs the unit tests. Nothing here needs a GPU.
+on:
+  push:
+    paths:
+      - "results/*.json"
+      - "neuraltrace/analysis.py"
+      - ".github/workflows/figures.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install numpy scipy scikit-learn pandas matplotlib pytest
+      - name: Tests
+        run: python -m pytest -q
+      - name: Build figures and summary
+        run: python -m neuraltrace.analysis results figures
+      - name: Commit generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add figures results/summary.md
+          git diff --cached --quiet || git commit -m "Regenerate figures and summary"
+          git push
