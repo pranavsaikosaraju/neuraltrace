@@ -3,6 +3,7 @@
 #   bash scripts/run.sh smoke
 #   bash scripts/run.sh data
 #   bash scripts/run.sh model <hf-model-id> [extra cli args]
+#   bash scripts/run.sh v2
 set -uo pipefail
 cd /kaggle/working/neuraltrace
 pip -q install -e . 2>&1 | tail -1
@@ -24,6 +25,25 @@ case "$stage" in
   model)
     shift
     python -m neuraltrace.cli run --model "$@" 2>&1 | cut -c1-300 | tail -150
+    ;;
+  v2)
+    # Second pass: selective abstention + steering layer sweep for every size,
+    # and a full run of a second model family. Small models share the two GPUs.
+    python -m neuraltrace.cli build-data --langs en es hi --n-per-band 120 --out data/entities.jsonl
+    wc -l data/entities.jsonl
+    mkdir -p logs v2
+    run() {
+      gpu="$1"; m="$2"; shift 2; s="${m##*/}"
+      CUDA_VISIBLE_DEVICES="$gpu" python -m neuraltrace.cli run --model "$m" --out raw "$@" > "logs/$s.log" 2>&1
+      echo "== $s exit $? =="; grep -E "selective|sweep layer|Error|error" "logs/$s.log" | cut -c1-330 | tail -12; tail -3 "logs/$s.log" | cut -c1-300
+    }
+    Q="--langs en es --steer-langs --sweep-langs en --steer-per-class 80 --no-probe"
+    ( for z in 0.5B 1.5B 3B; do run 0 "Qwen/Qwen2.5-$z-Instruct" $Q --emit-extras "v2/Qwen2.5-$z-Instruct.json"; done ) &
+    ( run 1 microsoft/Phi-3.5-mini-instruct --langs en es --steer-langs en --sweep-langs en --steer-per-class 80 \
+        --n-random 4 --n-shuffle 2 --emit v2/Phi-3.5-mini-instruct.json ) &
+    wait
+    run 0,1 Qwen/Qwen2.5-7B-Instruct $Q --sweep-null 2 --emit-extras v2/Qwen2.5-7B-Instruct.json
+    ls -la v2
     ;;
   *)
     echo "unknown stage: $stage"; exit 2 ;;
