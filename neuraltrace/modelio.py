@@ -16,7 +16,11 @@ def load(name: str, dtype: str = "float16"):
     tok = AutoTokenizer.from_pretrained(name, padding_side="left")
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(name, torch_dtype=getattr(torch, dtype), device_map="auto")
+    kw = dict(device_map="auto")
+    try:  # transformers >= 4.56 renamed torch_dtype to dtype
+        model = AutoModelForCausalLM.from_pretrained(name, dtype=getattr(torch, dtype), **kw)
+    except TypeError:
+        model = AutoModelForCausalLM.from_pretrained(name, torch_dtype=getattr(torch, dtype), **kw)
     model.eval()
     return tok, model
 
