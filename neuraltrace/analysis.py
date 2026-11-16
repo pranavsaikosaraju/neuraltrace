@@ -49,8 +49,59 @@ def expand(d: dict) -> dict:
                 conds[name] = c
             e["steering"] = {"layer": v["st"]["layer"], "delta": v["st"]["delta"],
                              "n_items": v["st"]["n_items"], "conditions": conds}
+        for full, k in (("selective", "sel"), ("sweep", "sweep")):
+            if k in v:
+                e[full] = v[k]
         out["langs"][lg] = e
     return out
+
+
+def _r(x, nd=4):
+    """Round floats recursively and convert numpy scalars so json stays small."""
+    if isinstance(x, dict):
+        return {k: _r(v, nd) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_r(v, nd) for v in x]
+    if isinstance(x, (bool, np.bool_)):
+        return bool(x)
+    if isinstance(x, (int, np.integer)):
+        return int(x)
+    if isinstance(x, (float, np.floating)):
+        return None if x != x else round(float(x), nd)
+    return x
+
+
+def compact(d: dict) -> dict:
+    """Inverse of expand(): the small per-model file that is committed to results/."""
+    out = {"model": d["model"], "n_layers": d["n_layers"], "d_model": d["d_model"], "n_params_b": d["n_params_b"],
+           "minutes": round(d.get("minutes") or 0), "steer_langs": list(d.get("config", {}).get("steer_langs", [])),
+           "cl": d.get("crosslingual"), "langs": {}}
+    for lg, v in d["langs"].items():
+        e = {"n": v["n"], "beh": v["behaviour"].get("overall", v["behaviour"])}
+        if "at_best_layer" in v:
+            e.update(cc=v["class_counts"], bl=v["best_layer"], abl=v["at_best_layer"],
+                     lw={t: v["layerwise"][t] for t in ("A", "C") if t in v["layerwise"]})
+        if "steering" in v:
+            st = v["steering"]
+            e["st"] = {"layer": st["layer"], "delta": st["delta"], "n_items": st["n_items"],
+                       "c": {n: [c["kind"], c.get("alpha"), [[c["counts"][k][f] for f in ("n", "abstain", "correct")]
+                                                              for k in ("known", "unk_real", "fict")]]
+                             for n, c in st["conditions"].items()}}
+        for full, k in (("selective", "sel"), ("sweep", "sweep")):
+            if full in v:
+                e[k] = v[full]
+        out["langs"][lg] = e
+    return _r(out)
+
+
+def extras(d: dict) -> dict:
+    """Only the selective-abstention and layer-sweep blocks (for results/extras/)."""
+    return _r({"model": d["model"], "langs": {lg: {k: v[full] for full, k in (("selective", "sel"), ("sweep", "sweep")) if full in v}
+                                              for lg, v in d["langs"].items()}})
+
+
+def family(d) -> str:
+    return short(d).split()[0].split("-")[0]
 
 
 def load_results(path: str = "results"):
@@ -69,7 +120,7 @@ def load_results(path: str = "results"):
 
 
 def short(d) -> str:
-    return d["model"].split("/")[-1].replace("-Instruct", "").replace("Qwen2.5-", "Qwen2.5 ")
+    return d["model"].split("/")[-1].replace("-Instruct", "").replace("-instruct", "").replace("Qwen2.5-", "Qwen2.5 ")
 
 
 def wilson(k, n, z=1.96):
