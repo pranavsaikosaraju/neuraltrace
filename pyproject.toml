@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuraltrace"
+version = "0.1.0"
+description = "Causal audit of knowledge-awareness in LLMs"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scikit-learn", "scipy", "pandas", "matplotlib"]
+
+[tool.setuptools.packages.find]
+include = ["neuraltrace*"]
