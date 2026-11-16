@@ -47,8 +47,10 @@ def _task_split(cls, split, task):
     return out
 
 
-def _ok(y):
-    return len(np.unique(y)) == 2
+def _ok(y, min_n: int = 8):
+    """Both classes present with at least min_n members each."""
+    y = np.asarray(y)
+    return len(y) > 0 and int(y.sum()) >= min_n and int((1 - y).sum()) >= min_n
 
 
 def layerwise(ent, cls, split, do_probe: bool = True):
