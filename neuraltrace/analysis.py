@@ -22,6 +22,37 @@ UNKNOWN = ("unk_real", "fict")
 
 
 # --------------------------------------------------------------------- loading
+def expand(d: dict) -> dict:
+    """Rebuild the full schema from the compact files stored in results/.
+
+    The compact format drops per-condition sample generations and the
+    last-token layerwise curves and stores steering counts as
+    [[n, abstain, correct]] triples ordered (known, unk_real, fict).
+    """
+    out = {"model": d["model"], "n_layers": d["n_layers"], "d_model": d["d_model"],
+           "n_params_b": d["n_params_b"], "minutes": d.get("minutes"), "crosslingual": d.get("cl"), "langs": {}}
+    for lg, v in d["langs"].items():
+        e = {"n": v["n"], "behaviour": {"overall": v["beh"]}}
+        if "cc" in v:
+            e["class_counts"] = v["cc"]
+        if "abl" in v:
+            e["best_layer"] = v["bl"]
+            e["at_best_layer"] = v["abl"]
+            e["layerwise"] = v["lw"]
+        if "st" in v:
+            conds = {}
+            for name, (kind, alpha, cnt) in v["st"]["c"].items():
+                c = {"kind": kind, "counts": {k: {"n": t[0], "abstain": t[1], "correct": t[2]}
+                                              for k, t in zip(("known", "unk_real", "fict"), cnt)}}
+                if alpha is not None:
+                    c["alpha"] = float(alpha)
+                conds[name] = c
+            e["steering"] = {"layer": v["st"]["layer"], "delta": v["st"]["delta"],
+                             "n_items": v["st"]["n_items"], "conditions": conds}
+        out["langs"][lg] = e
+    return out
+
+
 def load_results(path: str = "results"):
     """Final per-model result files, smallest model first."""
     out = []
@@ -30,6 +61,8 @@ def load_results(path: str = "results"):
             continue
         with open(f) as fh:
             d = json.load(fh)
+        if "cl" in d:  # compact format
+            d = expand(d)
         if "langs" in d and "n_params_b" in d:
             out.append(d)
     return sorted(out, key=lambda d: d["n_params_b"])
@@ -46,7 +79,7 @@ def wilson(k, n, z=1.96):
     den = 1 + z * z / n
     c = (p + z * z / (2 * n)) / den
     h = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
-    return p, c - h, c + h
+    return p, max(0.0, float(c - h)), min(1.0, float(c + h))
 
 
 # ---------------------------------------------------------------- steering math
@@ -146,6 +179,10 @@ def fig_scale(results, out):
             ax.plot([d["n_params_b"] for d in results][: len(sb)], sb, color=INK2, ls=":", lw=1.5, label="surface-only baseline (en)")
         ax.axhline(0.5, color=INK2, lw=1)
         ax.set_xscale("log")
+        sizes = [d["n_params_b"] for d in results]
+        ax.set_xticks(sizes)
+        ax.set_xticklabels([f"{x:.1f}" for x in sizes])
+        ax.minorticks_off()
         ax.set_xlabel("parameters (billions)")
         ax.set_title(title)
     axes[0].set_ylabel("test AUROC (difference-of-means, 95% bootstrap CI)")
