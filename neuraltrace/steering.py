@@ -16,8 +16,11 @@ import numpy as np
 CLASSES = ("known", "unk_real", "fict")
 
 
-def build_conditions(alphas=(-2.0, -1.0, 1.0, 2.0), probe_alphas=(-1.0, 1.0), n_random: int = 8, n_shuffle: int = 4):
-    conds = [{"name": "baseline", "kind": "none"}, {"name": "prompt_abstain", "kind": "prompt"}]
+def build_conditions(alphas=(-2.0, -1.0, 1.0, 2.0), probe_alphas=(-1.0, 1.0), n_random: int = 8,
+                     n_shuffle: int = 4, sweep_layers=()):
+    """All steering conditions. Steered conditions run on the plain prompt;
+    prompt_abstain is the prompt-based abstention baseline."""
+    conds = [{"name": "baseline", "kind": "plain"}, {"name": "prompt_abstain", "kind": "prompt"}]
     conds += [{"name": f"dom_a{a:+g}", "kind": "dom", "alpha": float(a)} for a in alphas]
     conds += [{"name": f"probe_a{a:+g}", "kind": "probe", "alpha": float(a)} for a in probe_alphas]
     conds.append({"name": "dom_ablate", "kind": "ablate"})
@@ -25,6 +28,8 @@ def build_conditions(alphas=(-2.0, -1.0, 1.0, 2.0), probe_alphas=(-1.0, 1.0), n_
         conds += [{"name": f"rand{k}_a{a:+g}", "kind": "random", "k": k, "alpha": a} for a in (-1.0, 1.0)]
     for k in range(n_shuffle):
         conds += [{"name": f"shuf{k}_a{a:+g}", "kind": "shuffle", "k": k, "alpha": a} for a in (-1.0, 1.0)]
+    for L in sweep_layers:
+        conds += [{"name": f"L{L}_dom_a{a:+g}", "kind": "layer_dom", "layer": int(L), "alpha": a} for a in (-1.0, 1.0)]
     return conds
 
 
@@ -40,14 +45,17 @@ def summarize(cls_items, abstain, correct):
     return out
 
 
-def sample_test_items(cls, split, per_class: int, seed: int = 0):
-    """Stratified sample of test-split indices, up to per_class from each class."""
+def sample_test_items(cls, split, per_class: int, seed: int = 0, splits=("test",)):
+    """Stratified sample of held-out indices, up to per_class from each class.
+
+    Directions are always fitted on the train split, so any non-train split is
+    held out for steering evaluation."""
     cls = np.asarray(cls)
     split = np.asarray(split)
     rng = np.random.default_rng(seed)
     picked = []
     for c in CLASSES:
-        pool = np.flatnonzero((split == "test") & (cls == c))
+        pool = np.flatnonzero(np.isin(split, splits) & (cls == c))
         k = min(per_class, len(pool))
         if k:
             picked += list(rng.choice(pool, k, replace=False))
