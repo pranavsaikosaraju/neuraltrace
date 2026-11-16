@@ -22,6 +22,10 @@ def main(argv=None):
     r.add_argument("--out", default="results")
     r.add_argument("--langs", nargs="+", default=["en", "es", "hi"])
     r.add_argument("--steer-langs", nargs="*", default=["en"])
+    r.add_argument("--sweep-langs", nargs="*", default=[], help="languages for the steering layer sweep")
+    r.add_argument("--sweep-null", type=int, default=3)
+    r.add_argument("--emit", default=None, help="also write a compact result file to this path")
+    r.add_argument("--emit-extras", default=None, help="write only the selective/sweep blocks to this path")
     r.add_argument("--limit", type=int, default=None, help="records per language (smoke test)")
     r.add_argument("--steer-per-class", type=int, default=120)
     r.add_argument("--n-random", type=int, default=8)
@@ -45,6 +49,8 @@ def main(argv=None):
         cfg = Config(
             langs=tuple(a.langs),
             steer_langs=tuple(a.steer_langs),
+            sweep_langs=tuple(a.sweep_langs),
+            sweep_null=a.sweep_null,
             limit_per_lang=a.limit,
             steer_per_class=a.steer_per_class,
             n_random=a.n_random,
@@ -54,9 +60,14 @@ def main(argv=None):
             seed=a.seed,
         )
         res = run_model(a.model, read_jsonl(a.data), a.out, cfg)
-        print("NT_RESULT_BEGIN")
-        print(json.dumps(res, separators=(",", ":")))
-        print("NT_RESULT_END")
+        from .analysis import compact, extras
+
+        for path, fn in ((a.emit, compact), (a.emit_extras, extras)):
+            if path:
+                os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+                with open(path, "w") as f:
+                    json.dump(fn(res), f, separators=(",", ":"))
+                print(f"wrote {path}")
 
 
 if __name__ == "__main__":
