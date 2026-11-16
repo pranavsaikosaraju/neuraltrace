@@ -17,7 +17,7 @@ CLASSES = ("known", "unk_real", "fict")
 
 
 def build_conditions(alphas=(-2.0, -1.0, 1.0, 2.0), probe_alphas=(-1.0, 1.0), n_random: int = 8,
-                     n_shuffle: int = 4, sweep_layers=()):
+                     n_shuffle: int = 4):
     """All steering conditions. Steered conditions run on the plain prompt;
     prompt_abstain is the prompt-based abstention baseline."""
     conds = [{"name": "baseline", "kind": "plain"}, {"name": "prompt_abstain", "kind": "prompt"}]
@@ -28,9 +28,17 @@ def build_conditions(alphas=(-2.0, -1.0, 1.0, 2.0), probe_alphas=(-1.0, 1.0), n_
         conds += [{"name": f"rand{k}_a{a:+g}", "kind": "random", "k": k, "alpha": a} for a in (-1.0, 1.0)]
     for k in range(n_shuffle):
         conds += [{"name": f"shuf{k}_a{a:+g}", "kind": "shuffle", "k": k, "alpha": a} for a in (-1.0, 1.0)]
-    for L in sweep_layers:
-        conds += [{"name": f"L{L}_dom_a{a:+g}", "kind": "layer_dom", "layer": int(L), "alpha": a} for a in (-1.0, 1.0)]
     return conds
+
+
+def sweep_layers(n_layers: int, fracs=(0.1, 0.25, 0.4, 0.55, 0.7, 0.85)):
+    """Layer indices at the given relative depths (the last layer is never used)."""
+    return sorted({min(n_layers - 2, max(0, int(round(f * (n_layers - 1))))) for f in fracs})
+
+
+def triple(counts):
+    """Compact form of summarize(): [[n, abstain, correct]] for (known, unk_real, fict)."""
+    return [[counts[c]["n"], counts[c]["abstain"], counts[c]["correct"]] for c in CLASSES]
 
 
 def summarize(cls_items, abstain, correct):
